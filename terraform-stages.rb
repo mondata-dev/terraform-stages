@@ -111,6 +111,9 @@ until stages.empty?
   end
 end
 
+cmd = ARGV.shift
+plan.reverse! if cmd == "destroy"
+
 puts 'Planning complete. I will run the stages in the following order:'
 puts
 plan.each_with_index do |s, i|
@@ -121,38 +124,57 @@ puts
 print 'To continue please confirm with "yes": '
 answer = STDIN.gets.chomp
 
-# exit(0) unless answer == 'yes'
-
-# start applying
+exit(0) unless answer == 'yes'
 puts
 
-plan.each_with_index do |s, i|
-  puts "Stage #{i+1}: #{s.name}"
-  puts
+args = ARGV.map{ |a|
+  if a =~ /^-var-file=(.+)/
+    "'-var-file=#{curdir}/#{$1}'"
+  else
+    "'#{a}'"
+  end
+}.join(" ")
 
-  s.depends_on.each do |d|
-    if d.is_a? StageDependency
-      next
-    elsif d.is_a? UrlDependency
-      d.wait_to_be_met
+if cmd == "apply"
+  # start applying
+  plan.each_with_index do |s, i|
+    puts "Stage #{i+1}: #{s.name}"
+    puts
+
+    s.depends_on.each do |d|
+      if d.is_a? StageDependency
+        next
+      elsif d.is_a? UrlDependency
+        d.wait_to_be_met
+      end
+    end
+
+    cmd = "cd #{curdir}/#{s.name} && terraform init && terraform apply #{args}"
+    puts cmd
+    puts
+
+    r = system(cmd)
+
+    unless r
+      puts 'terraform exited with non-zero exit code. Aborting.'
+      break
     end
   end
+elsif cmd == "destroy"
+  # start destroying
+  plan.each_with_index do |s, i|
+    puts "Stage #{i+1}: #{s.name}"
+    puts
 
-  args = ARGV.map{ |a|
-    if a =~ /^-var-file=(.+)/
-      "'-var-file=#{curdir}/#{$1}'"
-    else
-      "'#{a}'"
+    cmd = "cd #{curdir}/#{s.name} && terraform init && terraform destroy #{args}"
+    puts cmd
+    puts
+
+    r = system(cmd)
+
+    unless r
+      puts 'terraform exited with non-zero exit code. Aborting.'
+      break
     end
-  }.join(" ")
-  cmd = "cd #{curdir}/#{s.name} && terraform init && terraform apply #{args}"
-  puts cmd
-  puts
-
-  r = system(cmd)
-
-  unless r
-    puts 'terraform exited with non-zero exit code. Aborting.'
-    break
   end
 end
