@@ -1,11 +1,9 @@
 provider "postgresql" {
   host            = "localhost"
-  port            = 9000
-#   database        = "postgres"
+  port            = var.postgres_port
   username        = "postgres"
-  password        = "secret"
+  password        = var.postgres_password
   sslmode         = "disable"
-#   connect_timeout = 15
 }
 
 resource "postgresql_database" "example_db" {

@@ -13,23 +13,42 @@ class Stage
   def initialize(name, depends_on)
     @name = name
     @depends_on = depends_on
+    @outputs = {}
   end
 
   def to_s
     @name
   end
 
-  attr_reader :name, :depends_on
+  def inputs
+    inputs = {}
+
+    inputs["globals.tfvars"] = nil if File.exist?("globals.tfvars")
+    inputs["#@name/inputs.tfvars"] = nil if File.exist?("#@name/inputs.tfvars")
+
+    @depends_on.each do |d|
+      next if !d.is_a?(StageDependency) || d.variables.empty?
+
+      inputs[d.stage] = d.variables
+    end
+
+    inputs
+  end
+
+  attr_reader :name, :depends_on, :outputs
 end
 
 class StageDependency
-  def initialize(stage)
+  def initialize(stage, variables)
     @stage = stage
+    @variables = variables
   end
 
   def met?(plan)
     plan.any? { |s| s.name == @stage }
   end
+
+  attr_reader :stage, :variables
 end
 
 class UrlDependency
@@ -75,7 +94,7 @@ end
 stages = yaml.keys.map do |k|
   deps = (yaml[k]["depends_on"] || []).map do |d|
     if d["stage"]
-      StageDependency.new(d["stage"])
+      StageDependency.new(d["stage"], d["variables"] || [])
     elsif d["url"]
       UrlDependency.new(d["url"], d["timeout"] || 120)
     else
@@ -94,6 +113,16 @@ until stages.empty?
 
   stages.each_with_index do |s,i|
     if s.depends_on.all? { |d| !d.is_a?(StageDependency) || d.met?(plan) }
+      # add required outputs to dependend stages
+      s.depends_on.each do |d|
+        next if !d.is_a?(StageDependency) || d.variables.empty?
+
+        dep_stage = plan.find { |s2| s2.name == d.stage }
+        d.variables.each do |v|
+          dep_stage.outputs[v] = nil
+        end
+      end
+
       plan.push(s)
       found_idx = i
       break
@@ -118,6 +147,24 @@ puts 'Planning complete. I will run the stages in the following order:'
 puts
 plan.each_with_index do |s, i|
   puts "#{i+1}. #{s.name}"
+
+  unless s.inputs.empty?
+    puts "   inputs:"
+    s.inputs.each do |k,v|
+      if v.nil?
+        puts "   - var-file: #{k}"
+      else
+        puts "   - #{v.join(', ')} from #{k}"
+      end
+    end
+  end
+
+  unless s.outputs.empty?
+    puts "   outputs:"
+    s.outputs.keys.each do |k|
+      puts "   - #{k}"
+    end
+  end
 end
 
 puts
@@ -126,14 +173,6 @@ answer = STDIN.gets.chomp
 
 exit(0) unless answer == 'yes'
 puts
-
-args = ARGV.map{ |a|
-  if a =~ /^-var-file=(.+)/
-    "'-var-file=#{curdir}/#{$1}'"
-  else
-    "'#{a}'"
-  end
-}.join(" ")
 
 if cmd == "apply"
   # start applying
@@ -149,11 +188,28 @@ if cmd == "apply"
       end
     end
 
-    cmd = "cd #{curdir}/#{s.name} && terraform init && terraform apply #{args}"
+    args = []
+    s.inputs.each do |k, v|
+      if v.nil?
+        args.push("-var-file=../#{k}")
+      else
+        dep_stage = plan.find { |s2| s2.name == k }
+        v.each do |e|
+          args.push("-var")
+          args.push("#{e}=#{dep_stage.outputs[e]}")
+        end
+      end
+    end
+
+    cmd = "cd #{curdir}/#{s.name} && terraform init && terraform apply #{args.join(' ')}"
     puts cmd
     puts
 
     r = system(cmd)
+
+    s.outputs.keys.each do |k|
+      s.outputs[k] = `cd #{curdir}/#{s.name} && terraform output #{k}`.chomp
+    end
 
     unless r
       puts 'terraform exited with non-zero exit code. Aborting.'

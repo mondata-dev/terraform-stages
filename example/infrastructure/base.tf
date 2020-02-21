@@ -22,7 +22,7 @@ resource "docker_container" "db" {
   name  = "postgres"
 
   env = [
-    "POSTGRES_PASSWORD=secret"
+    "POSTGRES_PASSWORD=${var.postgres_password}"
   ]
   
   # Enable this if you need development access to db

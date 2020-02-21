@@ -3,5 +3,7 @@ infrastructure: {}
 config:
   depends_on:
   - stage: infrastructure
+    variables:
+    - postgres_port
   - url: http://localhost:9000
     timeout: 30
