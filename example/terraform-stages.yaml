@@ -5,5 +5,5 @@ config:
   - stage: infrastructure
     variables:
     - postgres_port
-  - url: http://localhost:9000
+  - url: http://localhost:${postgres_port}
     timeout: 30

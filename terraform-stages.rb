@@ -38,6 +38,10 @@ class Stage
   attr_reader :name, :depends_on, :outputs
 end
 
+def replace_vars(str, varmap)
+  str.gsub(/\$\{([\w_]+)\}/) { varmap[$1] }
+end
+
 class StageDependency
   def initialize(stage, variables)
     @stage = stage
@@ -57,36 +61,35 @@ class UrlDependency
     @timeout = timeout
   end
 
-  def met?
-    uri = URI.parse(@url)
+  def met?(rep_url)
+    uri = URI.parse(rep_url)
     req = Net::HTTP::Get.new(uri.to_s)
 
     begin
-      res = Net::HTTP.start(uri.host, uri.port) do |http|
+      Net::HTTP.start(uri.host, uri.port) do |http|
         http.request(req)
       end
-      puts res
-      puts res.body
 
       true
-    rescue Errno::ECONNRESET => e
-      puts e
+    rescue Errno::ECONNRESET
       false
-    rescue EOFError => e
+    rescue EOFError
       # There seems to be something there at least :)
       true
     end
   end
 
-  def wait_to_be_met
+  def wait_to_be_met(varmap)
+    rep_url = replace_vars(@url, varmap)
+
     i = 0
-    until met?
-      print "Waiting for #@url"
+    until met?(rep_url)
+      print "Waiting for #{rep_url}"
       print "  [#{i}s]" if i > 0
       puts '...'
       sleep 5
       i += 5
-      raise "Timout waiting for #@url" if i >= @timeout
+      raise "Timout waiting for #{rep_url}" if i >= @timeout
     end
   end
 end
@@ -180,25 +183,34 @@ if cmd == "apply"
     puts "Stage #{i+1}: #{s.name}"
     puts
 
+    # calculate values of input variables coming from dependend stages
+    dep_inputs = {}
+    s.inputs.each do |k, v|
+      next if v.nil?
+
+      dep_stage = plan.find { |s2| s2.name == k }
+      v.each do |e|
+        dep_inputs[e] = dep_stage.outputs[e]
+      end
+    end
+
     s.depends_on.each do |d|
       if d.is_a? StageDependency
         next
       elsif d.is_a? UrlDependency
-        d.wait_to_be_met
+        d.wait_to_be_met(dep_inputs)
       end
     end
 
     args = []
     s.inputs.each do |k, v|
-      if v.nil?
-        args.push("-var-file=../#{k}")
-      else
-        dep_stage = plan.find { |s2| s2.name == k }
-        v.each do |e|
-          args.push("-var")
-          args.push("#{e}=#{dep_stage.outputs[e]}")
-        end
-      end
+      next unless v.nil?
+
+      args.push("-var-file=../#{k}")
+    end
+    dep_inputs.each do |var, val|
+      args.push("-var")
+      args.push("#{var}=#{val}")
     end
 
     cmd = "cd #{curdir}/#{s.name} && terraform init && terraform apply #{args.join(' ')}"
