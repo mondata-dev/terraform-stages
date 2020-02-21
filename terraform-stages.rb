@@ -2,8 +2,6 @@
 
 require "fileutils"
 require "yaml"
-require "socket"
-require "timeout"
 require "net/http"
 
 curdir = File.expand_path(".")
@@ -66,7 +64,7 @@ class UrlDependency
     req = Net::HTTP::Get.new(uri.to_s)
 
     begin
-      Net::HTTP.start(uri.host, uri.port) do |http|
+      Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == 'https') do |http|
         http.request(req)
       end
 
