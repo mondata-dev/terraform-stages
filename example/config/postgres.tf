@@ -7,5 +7,5 @@ provider "postgresql" {
 }
 
 resource "postgresql_database" "example_db" {
-  name = "example_db"
+  name = var.db_name
 }
