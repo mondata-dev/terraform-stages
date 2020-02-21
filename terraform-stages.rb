@@ -23,8 +23,8 @@ class Stage
   def inputs
     inputs = {}
 
-    inputs["globals.tfvars"] = nil if File.exist?("globals.tfvars")
-    inputs["#@name/inputs.tfvars"] = nil if File.exist?("#@name/inputs.tfvars")
+    Dir["*.tfvars"].each { |f| inputs[f] = nil }
+    Dir["#@name/*.tfvars"].each { |f| inputs[f] = nil }
 
     @depends_on.each do |d|
       next if !d.is_a?(StageDependency) || d.variables.empty?
