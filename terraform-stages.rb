@@ -4,7 +4,7 @@ require "fileutils"
 require "yaml"
 require "net/http"
 
-curdir = File.expand_path(".")
+CURDIR = File.expand_path(".")
 yaml = YAML.safe_load(File.read("terraform-stages.yaml"))
 
 class Stage
@@ -31,6 +31,12 @@ class Stage
     end
 
     inputs
+  end
+
+  def update_outputs!
+    @outputs.keys.each do |k|
+      @outputs[k] = `cd #{CURDIR}/#@name && terraform output #{k}`.chomp
+    end
   end
 
   attr_reader :name, :depends_on, :outputs
@@ -175,22 +181,42 @@ answer = STDIN.gets.chomp
 exit(0) unless answer == 'yes'
 puts
 
+# calculate values of input variables coming from dependend stages
+def calc_dep_inputs(plan, stage_idx)
+  dep_inputs = {}
+  plan[stage_idx].inputs.each do |k, v|
+    next if v.nil?
+
+    dep_stage = plan[0...stage_idx].find { |s| s.name == k }
+    v.each do |e|
+      dep_inputs[e] = dep_stage.outputs[e]
+    end
+  end
+
+  dep_inputs
+end
+
+def calc_args(stage, dep_inputs)
+  args = []
+  stage.inputs.each do |k, v|
+    next unless v.nil?
+
+    args.push("-var-file=../#{k}")
+  end
+  dep_inputs.each do |var, val|
+    args.push("-var")
+    args.push("#{var}=#{val}")
+  end
+  args
+end
+
 if cmd == "apply"
   # start applying
   plan.each_with_index do |s, i|
     puts "Stage #{i+1}: #{s.name}"
     puts
 
-    # calculate values of input variables coming from dependend stages
-    dep_inputs = {}
-    s.inputs.each do |k, v|
-      next if v.nil?
-
-      dep_stage = plan.find { |s2| s2.name == k }
-      v.each do |e|
-        dep_inputs[e] = dep_stage.outputs[e]
-      end
-    end
+    dep_inputs = calc_dep_inputs(plan, i)
 
     s.depends_on.each do |d|
       if d.is_a? StageDependency
@@ -200,26 +226,15 @@ if cmd == "apply"
       end
     end
 
-    args = []
-    s.inputs.each do |k, v|
-      next unless v.nil?
+    args = calc_args(s, dep_inputs)
 
-      args.push("-var-file=../#{k}")
-    end
-    dep_inputs.each do |var, val|
-      args.push("-var")
-      args.push("#{var}=#{val}")
-    end
-
-    cmd = "cd #{curdir}/#{s.name} && terraform init && terraform apply #{args.join(' ')}"
+    cmd = "cd #{CURDIR}/#{s.name} && terraform init && terraform apply #{args.join(' ')}"
     puts cmd
     puts
 
     r = system(cmd)
 
-    s.outputs.keys.each do |k|
-      s.outputs[k] = `cd #{curdir}/#{s.name} && terraform output #{k}`.chomp
-    end
+    s.update_outputs!
 
     unless r
       puts 'terraform exited with non-zero exit code. Aborting.'
@@ -227,12 +242,24 @@ if cmd == "apply"
     end
   end
 elsif cmd == "destroy"
+  puts "Pre-phase: calculate dependency inputs..."
+  args = {}
+  plan.reverse.each_with_index do |s, i|
+    puts s.name
+    args[s] = calc_args(s, calc_dep_inputs(plan.reverse, i))
+    s.update_outputs!
+  end
+  puts
+
   # start destroying
+  puts "Let's start destroying stuff..."
+  puts
+
   plan.each_with_index do |s, i|
     puts "Stage #{i+1}: #{s.name}"
     puts
 
-    cmd = "cd #{curdir}/#{s.name} && terraform init && terraform destroy #{args}"
+    cmd = "cd #{CURDIR}/#{s.name} && terraform init && terraform destroy #{args[s].join(' ')}"
     puts cmd
     puts
 
