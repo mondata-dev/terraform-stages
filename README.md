@@ -132,7 +132,7 @@ Currently, terraform-stages does not support remote state.
 The default build directory is always the base directory.
 This means if no build directory is specified, any `.tfvars` files in the base directory or the stage directories will be included and the state will be stored within each stage directory.
 
-## A note on maturity of this project
+## A note on the maturity of this project
 
 This project is still in early alpha phase and many things might be subject to change in the future.
 In the long term, we do hope that a terraform update might make this project obsolete - but as this issue https://github.com/hashicorp/terraform/issues/2430 is known since 2015 this might still take some time.
