@@ -4,7 +4,18 @@ require "fileutils"
 require "yaml"
 require "net/http"
 
-CURDIR = File.expand_path(".")
+if ARGV.empty? || (ARGV[0] != "apply" && ARGV[0] != "destroy")
+  puts 'Usage: terraform-stages.rb <apply | destroy> [-build-dir=path/to/dir]'
+  exit(1)
+end
+cmd = ARGV.shift
+
+curdir = File.expand_path(".")
+build_dir_arg = ARGV.find { |a| a.start_with?("-build-dir=") }
+CONFIG = {
+  curdir: curdir,
+  build_dir: build_dir_arg.nil? ? curdir : File.expand_path(build_dir_arg.split("=")[1..-1].join),
+}.freeze
 yaml = YAML.safe_load(File.read("terraform-stages.yaml"))
 
 class Stage
@@ -18,11 +29,20 @@ class Stage
     @name
   end
 
+  def terraform_cmd(cmd, init, args)
+    state_dir = "#{CONFIG[:build_dir]}/#{@name}"
+    Dir.mkdir(state_dir) unless File.directory?(state_dir)
+
+    s = "cd #{CONFIG[:curdir]}/#{@name} && "
+    s += 'terraform init && ' if init
+    s + "terraform #{cmd} -state=#{state_dir}/terraform.tfstate #{args.join(' ')}"
+  end
+
   def inputs
     inputs = {}
 
-    Dir["*.tfvars"].each { |f| inputs[f] = nil }
-    Dir["#@name/*.tfvars"].each { |f| inputs[f] = nil }
+    Dir["#{CONFIG[:build_dir]}/*.tfvars"].each { |f| inputs[f] = nil }
+    Dir["#{CONFIG[:build_dir]}/#{@name}/*.tfvars"].each { |f| inputs[f] = nil }
 
     @depends_on.each do |d|
       next if !d.is_a?(StageDependency) || d.variables.empty?
@@ -35,7 +55,7 @@ class Stage
 
   def update_outputs!
     @outputs.keys.each do |k|
-      @outputs[k] = `cd #{CURDIR}/#@name && terraform output #{k}`.chomp
+      @outputs[k] = `#{terraform_cmd('output', false, [k])}`.chomp
     end
   end
 
@@ -147,7 +167,6 @@ until stages.empty?
   end
 end
 
-cmd = ARGV.shift
 plan.reverse! if cmd == "destroy"
 
 puts 'Planning complete. I will run the stages in the following order:'
@@ -201,7 +220,7 @@ def calc_args(stage, dep_inputs)
   stage.inputs.each do |k, v|
     next unless v.nil?
 
-    args.push("-var-file=../#{k}")
+    args.push("-var-file=#{k}")
   end
   dep_inputs.each do |var, val|
     args.push("-var")
@@ -226,9 +245,7 @@ if cmd == "apply"
       end
     end
 
-    args = calc_args(s, dep_inputs)
-
-    cmd = "cd #{CURDIR}/#{s.name} && terraform init && terraform apply #{args.join(' ')}"
+    cmd = s.terraform_cmd('apply', true, calc_args(s, dep_inputs))
     puts cmd
     puts
 
@@ -259,7 +276,7 @@ elsif cmd == "destroy"
     puts "Stage #{i+1}: #{s.name}"
     puts
 
-    cmd = "cd #{CURDIR}/#{s.name} && terraform init && terraform destroy #{args[s].join(' ')}"
+    cmd = s.terraform_cmd('destroy', true, args[s])
     puts cmd
     puts
 
