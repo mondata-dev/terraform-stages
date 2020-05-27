@@ -97,6 +97,8 @@ class UrlDependency
       true
     rescue Errno::ECONNRESET
       false
+    rescue Net::ReadTimeout
+      false
     rescue EOFError
       # There seems to be something there at least :)
       true
